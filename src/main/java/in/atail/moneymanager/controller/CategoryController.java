@@ -2,6 +2,7 @@ package in.atail.moneymanager.controller;
 
 import in.atail.moneymanager.dto.CategoryDTO;
 import in.atail.moneymanager.service.CategoryService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,7 +25,7 @@ public class CategoryController {
      * @return 保存后的分类数据
      */
     @PostMapping
-    public ResponseEntity<CategoryDTO> saveCategory(@RequestBody CategoryDTO categoryDTO){
+    public ResponseEntity<CategoryDTO> saveCategory(@RequestBody @Valid CategoryDTO categoryDTO){
         return ResponseEntity.status(HttpStatus.CREATED).body(categoryService.saveCategory(categoryDTO));
     }
 
@@ -60,7 +61,13 @@ public class CategoryController {
      * @return 更新后的分类数据
      */
     @PutMapping("/{categoryId}")
-    public ResponseEntity<CategoryDTO> updateCategory(@PathVariable Long categoryId, @RequestBody CategoryDTO categoryDTO){
+    public ResponseEntity<CategoryDTO> updateCategory(@PathVariable Long categoryId, @RequestBody @Valid CategoryDTO categoryDTO){
         return ResponseEntity.ok(categoryService.updateCategory(categoryId, categoryDTO));
+    }
+
+    @DeleteMapping("/{categoryId}")
+    public ResponseEntity<Void> deleteCategory(@PathVariable Long categoryId) {
+        categoryService.deleteCategory(categoryId);
+        return ResponseEntity.noContent().build();
     }
 }

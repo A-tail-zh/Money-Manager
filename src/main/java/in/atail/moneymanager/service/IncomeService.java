@@ -1,16 +1,19 @@
 package in.atail.moneymanager.service;
 
 import in.atail.moneymanager.dto.IncomeDTO;
+import in.atail.moneymanager.dto.PageDTO;
 import in.atail.moneymanager.entity.CategoryEntity;
 import in.atail.moneymanager.entity.IncomeEntity;
 import in.atail.moneymanager.entity.ProfileEntity;
 import in.atail.moneymanager.exception.ResourceNotFoundException;
-import in.atail.moneymanager.exception.UnauthorizedException;
 import in.atail.moneymanager.repository.CategoryRepository;
 import in.atail.moneymanager.repository.IncomeRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Sort;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,129 +32,96 @@ public class IncomeService {
     private final CategoryRepository categoryRepository;
     private final ProfileService profileService;
 
-    //filter incomes
-    public List<IncomeDTO> filterIncome(LocalDate startDate, LocalDate endDate, String keyword, Sort sort){
+    public List<IncomeDTO> filterIncome(LocalDate startDate, LocalDate endDate, String keyword, Sort sort) {
         return incomeRepository.findByProfileIdAndDateBetweenAndNameContainingIgnoreCase(
-                profileService.getCurrentProfile().getId(),
-                startDate,
-                endDate,
-                keyword,
-                sort
-        ).stream()
+                        profileService.getCurrentProfileId(),
+                        startDate,
+                        endDate,
+                        keyword,
+                        sort
+                ).stream()
                 .map(this::toDTO)
                 .collect(Collectors.toList());
     }
 
-    /**
-     * 获取当前用户的总收入
-     *
-     * @return 总收入金额,如果没有记录则返回 0
-     */
     public BigDecimal getTotalIncomeForCurrentUser() {
-        ProfileEntity profile = profileService.getCurrentProfile();
-        BigDecimal total = incomeRepository.findTotalIncomeByProfileId(profile.getId());
-
-        log.debug("用户 {} 的总收入: {}", profile.getId(), total);
+        Long profileId = profileService.getCurrentProfileId();
+        BigDecimal total = incomeRepository.findTotalIncomeByProfileId(profileId);
+        log.debug("User {} total income {}", profileId, total);
         return total != null ? total : BigDecimal.ZERO;
     }
 
-    /**
-     * 获取当前用户最近 5 条收入记录
-     *
-     * @return 最近 5 条收入的 DTO 列表
-     */
-    public List<IncomeDTO> getLatest5IncomesForCurrentUser() {
-        ProfileEntity profile = profileService.getCurrentProfile();
+    public BigDecimal getCurrentMonthIncomeForCurrentUser() {
+        Long profileId = profileService.getCurrentProfileId();
+        LocalDate startOfMonth = LocalDate.now().withDayOfMonth(1);
+        LocalDate endOfMonth = LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth());
+        BigDecimal total = incomeRepository.findTotalIncomeByProfileIdAndDateBetween(profileId, startOfMonth, endOfMonth);
+        log.debug("User {} current month income {}", profileId, total);
+        return total != null ? total : BigDecimal.ZERO;
+    }
 
-        List<IncomeDTO> incomes = incomeRepository
-                .findTop5ByProfileIdOrderByDateDesc(profile.getId())
+    public List<IncomeDTO> getLatest5IncomesForCurrentUser() {
+        Long profileId = profileService.getCurrentProfileId();
+        List<IncomeDTO> incomes = incomeRepository.findTop5ByProfileIdOrderByDateDesc(profileId)
                 .stream()
                 .map(this::toDTO)
                 .collect(Collectors.toList());
-
-        log.debug("获取用户 {} 最近 5 条收入,数量: {}", profile.getId(), incomes.size());
+        log.debug("Loaded {} latest incomes for user {}", incomes.size(), profileId);
         return incomes;
     }
 
-    /**
-     * 删除指定的收入记录
-     *
-     * @param id 收入记录 ID
-     * @throws ResourceNotFoundException 如果收入记录不存在
-     * @throws UnauthorizedException 如果当前用户无权删除该记录
-     */
     @Transactional
     public void deleteIncome(Long id) {
-        log.info("尝试删除收入记录: {}", id);
-
-        ProfileEntity profile = profileService.getCurrentProfile();
-        IncomeEntity incomeEntity = incomeRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("收入记录不存在"));
-
-        // 权限检查
-        if (!incomeEntity.getProfile().getId().equals(profile.getId())) {
-            log.warn("用户 {} 尝试删除不属于自己的收入记录 {}",
-                    profile.getId(), id);
-            throw new UnauthorizedException("无权删除此收入记录");
-        }
-
+        Long profileId = profileService.getCurrentProfileId();
+        IncomeEntity incomeEntity = incomeRepository.findByIdAndProfileId(id, profileId)
+                .orElseThrow(() -> new ResourceNotFoundException("Income record does not exist"));
         incomeRepository.delete(incomeEntity);
-        log.info("成功删除收入记录: {}", id);
+        log.info("User {} deleted income {}", profileId, id);
     }
 
-    /**
-     * 获取当前用户本月的所有收入记录
-     *
-     * @return 本月收入的 DTO 列表
-     */
-    public List<IncomeDTO> getCurrentMonthIncomesForCurrentUser() {
-        ProfileEntity profile = profileService.getCurrentProfile();
-
+    public PageDTO<IncomeDTO> getCurrentMonthIncomesForCurrentUser(int page, int size, String sortBy, String sortDir) {
+        Long profileId = profileService.getCurrentProfileId();
         LocalDate startOfMonth = LocalDate.now().withDayOfMonth(1);
-        LocalDate endOfMonth = LocalDate.now().withDayOfMonth(
-                LocalDate.now().lengthOfMonth()
-        );
+        LocalDate endOfMonth = LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth());
 
-        List<IncomeDTO> incomes = incomeRepository
-                .findByProfileIdAndDateBetween(profile.getId(), startOfMonth, endOfMonth)
-                .stream()
-                .map(this::toDTO)
-                .collect(Collectors.toList());
+        Sort sort = Sort.by("asc".equalsIgnoreCase(sortDir) ? Sort.Direction.ASC : Sort.Direction.DESC, sortBy);
+        Pageable pageable = PageRequest.of(page, size, sort);
+        Page<IncomeDTO> incomePage = incomeRepository
+                .findByProfileIdAndDateBetween(profileId, startOfMonth, endOfMonth, pageable)
+                .map(this::toDTO);
 
-        log.debug("获取用户 {} 本月收入,数量: {}", profile.getId(), incomes.size());
-        return incomes;
+        return PageDTO.from(incomePage);
     }
 
-    /**
-     * 添加新的收入记录
-     *
-     * @param incomeDTO 收入信息 DTO
-     * @return 保存后的收入 DTO
-     * @throws ResourceNotFoundException 如果分类不存在
-     */
     @Transactional
     public IncomeDTO addIncome(IncomeDTO incomeDTO) {
-        log.info("添加新收入: {}, 金额: {}",
-                incomeDTO.getName(), incomeDTO.getAmount());
-
         ProfileEntity profile = profileService.getCurrentProfile();
-        CategoryEntity category = categoryRepository.findById(incomeDTO.getCategoryId())
-                .orElseThrow(() -> new ResourceNotFoundException("分类不存在"));
+        CategoryEntity category = getIncomeCategory(profile.getId(), incomeDTO.getCategoryId());
 
-        IncomeEntity saved = incomeRepository.save(
-                toEntity(incomeDTO, profile, category)
-        );
-
-        log.info("成功添加收入,ID: {}", saved.getId());
+        IncomeEntity saved = incomeRepository.save(toEntity(incomeDTO, profile, category));
+        log.info("User {} added income {}", profile.getId(), saved.getId());
         return toDTO(saved);
     }
 
-    /**
-     * 将 IncomeDTO 转换为 IncomeEntity
-     */
-    private IncomeEntity toEntity(IncomeDTO incomeDTO,
-                                  ProfileEntity profile,
-                                  CategoryEntity category) {
+    @Transactional
+    public IncomeDTO updateIncome(Long id, IncomeDTO incomeDTO) {
+        Long profileId = profileService.getCurrentProfileId();
+        IncomeEntity incomeEntity = incomeRepository.findByIdAndProfileId(id, profileId)
+                .orElseThrow(() -> new ResourceNotFoundException("Income record does not exist"));
+        CategoryEntity category = getIncomeCategory(profileId, incomeDTO.getCategoryId());
+
+        incomeEntity.setName(incomeDTO.getName());
+        incomeEntity.setIcon(incomeDTO.getIcon());
+        incomeEntity.setDate(incomeDTO.getDate());
+        incomeEntity.setAmount(incomeDTO.getAmount());
+        incomeEntity.setCategory(category);
+
+        IncomeEntity updatedIncome = incomeRepository.save(incomeEntity);
+        log.info("User {} updated income {}", profileId, updatedIncome.getId());
+        return toDTO(updatedIncome);
+    }
+
+    private IncomeEntity toEntity(IncomeDTO incomeDTO, ProfileEntity profile, CategoryEntity category) {
         return IncomeEntity.builder()
                 .id(incomeDTO.getId())
                 .name(incomeDTO.getName())
@@ -163,9 +133,6 @@ public class IncomeService {
                 .build();
     }
 
-    /**
-     * 将 IncomeEntity 转换为 IncomeDTO
-     */
     private IncomeDTO toDTO(IncomeEntity entity) {
         return IncomeDTO.builder()
                 .id(entity.getId())
@@ -173,12 +140,19 @@ public class IncomeService {
                 .icon(entity.getIcon())
                 .date(entity.getDate())
                 .amount(entity.getAmount())
-                .categoryName(entity.getCategory() != null ?
-                        entity.getCategory().getName() : null)
-                .categoryId(entity.getCategory() != null ?
-                        entity.getCategory().getId() : null)
+                .categoryName(entity.getCategory() != null ? entity.getCategory().getName() : null)
+                .categoryId(entity.getCategory() != null ? entity.getCategory().getId() : null)
                 .createdAt(entity.getCreatedAt())
                 .updatedAt(entity.getUpdatedAt())
                 .build();
+    }
+
+    private CategoryEntity getIncomeCategory(Long profileId, Long categoryId) {
+        CategoryEntity category = categoryRepository.findByIdAndProfileId(categoryId, profileId)
+                .orElseThrow(() -> new ResourceNotFoundException("Category does not exist"));
+        if (!"income".equalsIgnoreCase(category.getType())) {
+            throw new IllegalStateException("Income records must use an income category");
+        }
+        return category;
     }
 }
