@@ -1,1 +1,0 @@
-import{B as e}from"./index-Dkoaitm7.js";const r=async()=>{const{data:t}=await e.get("/categories");return t},c=async t=>{const{data:a}=await e.get(`/categories/${t}`);return a},n=async t=>{const{data:a}=await e.post("/categories",t);return a},i=async(t,a)=>{const{data:s}=await e.put(`/categories/${t}`,a);return s};export{r as a,n as c,c as g,i as u};
